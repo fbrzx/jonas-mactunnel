@@ -20,11 +20,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let runSh = (c as NSString).appendingPathComponent("run.sh")
             if FileManager.default.fileExists(atPath: runSh) { return c }
         }
-        return "/Users/fabfab/Projects/oc"
+        return "/Users/fabfab/Projects/jonas-mactunnel" // fallback for development
     }()
 
     private var scriptPath: String { (projectRoot as NSString).appendingPathComponent("run.sh") }
     private var syncScriptPath: String { (projectRoot as NSString).appendingPathComponent("scripts/sync-from-jonas.sh") }
+    private var envFileCandidates: [String] {
+        var candidates: [String] = []
+        if let resourcePath = Bundle.main.resourcePath {
+            candidates.append((resourcePath as NSString).appendingPathComponent(".env"))
+        }
+        candidates.append((projectRoot as NSString).appendingPathComponent(".env"))
+        return candidates
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -154,6 +162,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         process.standardOutput = pipe
         process.standardError = pipe
         var env = ProcessInfo.processInfo.environment
+        let overrides = loadEnvOverrides()
+        for (key, value) in overrides {
+            env[key] = value
+        }
         env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
         process.environment = env
         if let input = stdinData, let data = input.data(using: .utf8) {
@@ -190,6 +202,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let output = self.runShell(script: script, args: args, stdinData: stdinData)
             DispatchQueue.main.async { completion(output) }
         }
+    }
+
+    private func loadEnvOverrides() -> [String: String] {
+        for path in envFileCandidates {
+            if FileManager.default.fileExists(atPath: path) {
+                return parseEnvFile(at: path)
+            }
+        }
+        return [:]
+    }
+
+    private func parseEnvFile(at path: String) -> [String: String] {
+        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+            return [:]
+        }
+        var result: [String: String] = [:]
+        for rawLine in contents.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty || line.hasPrefix("#") { continue }
+            guard let separatorIndex = line.firstIndex(of: "=") else { continue }
+            let key = String(line[..<separatorIndex]).trimmingCharacters(in: .whitespaces)
+            var value = String(line[line.index(after: separatorIndex)...])
+            value = value.trimmingCharacters(in: .whitespaces)
+            if value.hasPrefix("\"") && value.hasSuffix("\"") && value.count >= 2 {
+                value = String(value.dropFirst().dropLast())
+            }
+            if !key.isEmpty {
+                result[key] = value
+            }
+        }
+        return result
     }
 
     // MARK: - Notifications
