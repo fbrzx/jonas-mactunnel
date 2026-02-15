@@ -8,28 +8,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var restartItem: NSMenuItem!
     private var pollTimer: Timer?
 
-    private let scriptPath: String = {
+    private let projectRoot: String = {
         let bundle = Bundle.main.bundlePath
         let appDir = (bundle as NSString).deletingLastPathComponent
         let candidates = [
-            (appDir as NSString).appendingPathComponent("run.sh"),
-            ((appDir as NSString).deletingLastPathComponent as NSString)
-                .appendingPathComponent("run.sh"),
-            (((appDir as NSString).deletingLastPathComponent as NSString)
-                .deletingLastPathComponent as NSString)
-                .appendingPathComponent("run.sh"),
+            appDir,
+            (appDir as NSString).deletingLastPathComponent,
+            ((appDir as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent,
         ]
         for c in candidates {
-            if FileManager.default.fileExists(atPath: c) { return c }
+            let runSh = (c as NSString).appendingPathComponent("run.sh")
+            if FileManager.default.fileExists(atPath: runSh) { return c }
         }
-        // Fallback: resolve relative to the compiled binary's real location
-        let proc = ProcessInfo.processInfo.arguments[0]
-        let binDir = (proc as NSString).deletingLastPathComponent
-        let fallback = (binDir as NSString).appendingPathComponent("../../run.sh")
-        let resolved = (fallback as NSString).standardizingPath
-        if FileManager.default.fileExists(atPath: resolved) { return resolved }
-        return "/Users/fabfab/Projects/oc/run.sh"
+        return "/Users/fabfab/Projects/oc"
     }()
+
+    private var scriptPath: String { (projectRoot as NSString).appendingPathComponent("run.sh") }
+    private var syncScriptPath: String { (projectRoot as NSString).appendingPathComponent("scripts/sync-from-jonas.sh") }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -57,6 +52,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         restartItem = NSMenuItem(title: "Reconnect Jonas", action: #selector(restartTunnel), keyEquivalent: "r")
         restartItem.target = self
         menu.addItem(restartItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let syncItem = NSMenuItem(title: "Sync Vault", action: #selector(syncVault), keyEquivalent: "y")
+        syncItem.target = self
+        menu.addItem(syncItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -101,6 +102,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func syncVault() {
+        runShellAsync(script: syncScriptPath, args: ["--yes"]) { [weak self] output in
+            let lastLine = output.components(separatedBy: "\n").last(where: { !$0.isEmpty }) ?? output
+            self?.notify(title: "Jonas Tunnel", body: lastLine)
+        }
+    }
+
     @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
     }
@@ -138,17 +146,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Shell helpers
 
-    private func runScript(_ command: String) -> String {
+    private func runShell(script: String, args: [String], stdinData: String? = nil) -> String {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [scriptPath, command]
+        process.arguments = [script] + args
         process.standardOutput = pipe
         process.standardError = pipe
-        // Inherit environment so .env sourcing in run.sh works
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
         process.environment = env
+        if let input = stdinData, let data = input.data(using: .utf8) {
+            let stdinPipe = Pipe()
+            process.standardInput = stdinPipe
+            stdinPipe.fileHandleForWriting.write(data)
+            stdinPipe.fileHandleForWriting.closeFile()
+        }
         do {
             try process.run()
             process.waitUntilExit()
@@ -159,13 +172,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
 
+    private func runScript(_ command: String) -> String {
+        runShell(script: scriptPath, args: [command])
+    }
+
     private func runScriptAsync(_ command: String, completion: @escaping (String) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             let output = self.runScript(command)
-            DispatchQueue.main.async {
-                completion(output)
-            }
+            DispatchQueue.main.async { completion(output) }
+        }
+    }
+
+    private func runShellAsync(script: String, args: [String], stdinData: String? = nil, completion: @escaping (String) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            let output = self.runShell(script: script, args: args, stdinData: stdinData)
+            DispatchQueue.main.async { completion(output) }
         }
     }
 
