@@ -17,6 +17,7 @@ LOG_FILE="${STATE_DIR}/tunnel.log"
 
 PORT_LOCAL="${PORT_LOCAL:-3000}"
 PORT_REMOTE="${PORT_REMOTE:-3000}"
+GATEWAY_PORT="${GATEWAY_PORT:-18789}"
 HOST_BIND="${HOST_BIND:-127.0.0.1}"
 BROWSER_APP="${BROWSER_APP:-Google Chrome}"
 
@@ -39,6 +40,7 @@ Required env vars:
 Optional env vars:
 	PORT_LOCAL    Local forwarded port (default: 3000)
 	PORT_REMOTE   Remote destination port (default: 3000)
+	GATEWAY_PORT  Local gateway port mapping (default: 18789)
 	HOST_BIND     Remote bind host (default: 127.0.0.1)
 	BROWSER_APP   Browser app name for start-watch (default: Google Chrome)
 EOF
@@ -80,6 +82,35 @@ wait_for_tunnel() {
 	return 1
 }
 
+port_in_use() {
+	local port=$1
+	nc -z 127.0.0.1 "${port}" >/dev/null 2>&1
+	return $?
+}
+
+check_ports_available() {
+	local errors=()
+	if port_in_use "${PORT_LOCAL}"; then
+		errors+=("Local port ${PORT_LOCAL} is already in use")
+	fi
+	
+	if (( ${#errors[@]} > 0 )); then
+		for error in "${errors[@]}"; do
+			echo "Error: ${error}" >&2
+		done
+		return 1
+	fi
+	return 0
+}
+
+check_gateway_available() {
+	if port_in_use "${GATEWAY_PORT}"; then
+		echo "Warning: Gateway port ${GATEWAY_PORT} is already in use (another gateway running?)" >&2
+		return 1
+	fi
+	return 0
+}
+
 start_tunnel() {
 	mkdir -p "${STATE_DIR}"
 
@@ -88,21 +119,47 @@ start_tunnel() {
 		return 0
 	fi
 
+	if ! check_ports_available; then
+		exit 1
+	fi
+
+	local gateway_msg=""
+	local gateway_available=0
+	if port_in_use "${GATEWAY_PORT}"; then
+		gateway_msg="WARNING: Gateway port ${GATEWAY_PORT} already in use"
+		echo "${gateway_msg}" >&2
+	else
+		gateway_available=1
+	fi
+
 	echo "Starting tunnel..."
-	ssh -i "${KEY_PATH}" \
-		-N \
-		-L "${PORT_LOCAL}:${HOST_BIND}:${PORT_REMOTE}" \
-		-o ExitOnForwardFailure=yes \
-		-o ServerAliveInterval=60 \
-		-o ServerAliveCountMax=3 \
-		"${HOST}" \
-		>>"${LOG_FILE}" 2>&1 &
+	local ssh_cmd=(
+		ssh -i "${KEY_PATH}"
+		-N
+		-L "${PORT_LOCAL}:${HOST_BIND}:${PORT_REMOTE}"
+	)
+
+	if (( gateway_available == 1 )); then
+		ssh_cmd+=(-L "${GATEWAY_PORT}:${HOST_BIND}:${GATEWAY_PORT}")
+	fi
+
+	ssh_cmd+=(
+		-o ExitOnForwardFailure=yes
+		-o ServerAliveInterval=60
+		-o ServerAliveCountMax=3
+		"${HOST}"
+	)
+
+	"${ssh_cmd[@]}" >>"${LOG_FILE}" 2>&1 &
 
 	local pid=$!
 	echo "${pid}" > "${PID_FILE}"
 
 	if wait_for_tunnel 20; then
 		echo "Tunnel started (PID ${pid})."
+		if [[ -n "${gateway_msg}" ]]; then
+			echo "${gateway_msg}"
+		fi
 	else
 		echo "Tunnel did not become ready in time. Check ${LOG_FILE}." >&2
 		stop_tunnel || true
@@ -156,7 +213,11 @@ start_watch() {
 
 status_tunnel() {
 	if is_running; then
-		echo "Tunnel running (PID $(cat "${PID_FILE}"), localhost:${PORT_LOCAL} -> ${HOST_BIND}:${PORT_REMOTE} via ${HOST})."
+		local gateway_status=""
+		if check_gateway_available >/dev/null 2>&1; then
+			gateway_status=" + gateway ${HOST_BIND}:${GATEWAY_PORT}"
+		fi
+		echo "Tunnel running (PID $(cat "${PID_FILE}"), localhost:${PORT_LOCAL} -> ${HOST_BIND}:${PORT_REMOTE} via ${HOST}${gateway_status})."
 	else
 		echo "Tunnel stopped."
 	fi

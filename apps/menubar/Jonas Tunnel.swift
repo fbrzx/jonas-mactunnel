@@ -84,29 +84,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     @objc private func startTunnel() {
+        logDebug("startTunnel() called")
         setMenuEnabled(false)
         runScriptAsync("start") { [weak self] output in
-            self?.refreshStatus()
-            self?.setMenuEnabled(true)
+            self?.logDebug("start command output: \(output)")
             self?.notify(title: "Jonas Tunnel", body: output)
+            // Give tunnel a moment to fully establish
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.logDebug("calling refreshStatus after 1s delay")
+                self?.refreshStatus()
+                self?.setMenuEnabled(true)
+            }
         }
     }
 
     @objc private func stopTunnel() {
         setMenuEnabled(false)
         runScriptAsync("stop") { [weak self] output in
-            self?.refreshStatus()
-            self?.setMenuEnabled(true)
             self?.notify(title: "Jonas Tunnel", body: output)
+            self?.refreshStatus()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.setMenuEnabled(true)
+            }
         }
     }
 
     @objc private func restartTunnel() {
         setMenuEnabled(false)
         runScriptAsync("restart") { [weak self] output in
-            self?.refreshStatus()
-            self?.setMenuEnabled(true)
             self?.notify(title: "Jonas Tunnel", body: output)
+            // Give tunnel a moment to fully establish
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.refreshStatus()
+                self?.setMenuEnabled(true)
+            }
         }
     }
 
@@ -123,24 +134,86 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Status
 
+    private var lastDashboardOk = false
+    private var lastGatewayOk = false
+    private var tunnelRunning = false
+
     private func refreshStatus() {
-        let output = runScript("status")
-        let running = output.lowercased().contains("running")
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            if let button = self.statusItem.button {
-                let symbolName = running ? "lock.fill" : "lock.open"
-                if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Jonas Tunnel") {
-                    image.size = NSSize(width: 16, height: 16)
-                    image.isTemplate = true
-                    button.image = image
+            let output = self.runScript("status")
+            let running = output.lowercased().contains("running")
+            
+            self.logDebug("Status check: output='\(output)' running=\(running)")
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.tunnelRunning = running
+                
+                if let button = self.statusItem.button {
+                    let symbolName = running ? "lock.fill" : "lock.open"
+                    if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Jonas Tunnel") {
+                        image.size = NSSize(width: 16, height: 16)
+                        image.isTemplate = true
+                        button.image = image
+                    }
+                    button.title = ""
                 }
-                button.title = ""
+                
+                if !running {
+                    self.statusMenuItem.title = "Status: Disconnected"
+                    self.lastDashboardOk = false
+                    self.lastGatewayOk = false
+                } else {
+                    // Check ports in background
+                    self.checkPorts()
+                    self.statusMenuItem.title = "Status: Checking..."
+                }
+                
+                self.startItem.isEnabled = !running
+                self.restartItem.isEnabled = running
+                self.stopItem.isEnabled = running
+                self.logDebug("UI updated: running=\(running)")
             }
-            self.statusMenuItem.title = running ? "Status: Connected" : "Status: Disconnected"
-            self.startItem.isEnabled = !running
-            self.restartItem.isEnabled = running
-            self.stopItem.isEnabled = running
+        }
+    }
+
+    private func checkPorts() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self, self.tunnelRunning else { return }
+            
+            let overrides = self.loadEnvOverrides()
+            let portLocal = Int(overrides["PORT_LOCAL"] ?? "8080") ?? 8080
+            let gatewayPort = Int(overrides["GATEWAY_PORT"] ?? "18789") ?? 18789
+            
+            let dashboardOk = self.isPortReachable(portLocal)
+            let gatewayOk = self.isPortReachable(gatewayPort)
+            
+            self.logDebug("Port check: dashboard(\(portLocal))=\(dashboardOk) gateway(\(gatewayPort))=\(gatewayOk)")
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self, self.tunnelRunning else { return }
+                self.lastDashboardOk = dashboardOk
+                self.lastGatewayOk = gatewayOk
+                
+                var statusParts: [String] = []
+                statusParts.append("Dashboard \(dashboardOk ? "✓" : "✗")")
+                statusParts.append("Gateway \(gatewayOk ? "✓" : "✗")")
+                self.statusMenuItem.title = "Status: \(statusParts.joined(separator: " | "))"
+            }
+        }
+    }
+
+    private func isPortReachable(_ port: Int) -> Bool {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
+        task.arguments = ["-z", "-w", "1", "127.0.0.1", String(port)]
+        do {
+            try task.run()
+            task.waitUntilExit()
+            return task.terminationStatus == 0
+        } catch {
+            return false
         }
     }
 
@@ -149,6 +222,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.startItem.isEnabled = enabled
             self?.stopItem.isEnabled = enabled
             self?.restartItem.isEnabled = enabled
+        }
+    }
+
+    private func logDebug(_ message: String) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let timestamp = formatter.string(from: Date())
+        let logMessage = "[\(timestamp)] \(message)"
+        
+        DispatchQueue.global().async {
+            if let data = (logMessage + "\n").data(using: .utf8) {
+                let logFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".jonas-tunnel-debug.log")
+                if FileManager.default.fileExists(atPath: logFile.path) {
+                    if let handle = FileHandle(forWritingAtPath: logFile.path) {
+                        handle.seekToEndOfFile()
+                        handle.write(data)
+                        handle.closeFile()
+                    }
+                } else {
+                    try? data.write(to: logFile)
+                }
+            }
         }
     }
 
