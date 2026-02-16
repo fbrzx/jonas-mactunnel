@@ -15,7 +15,7 @@ STATE_DIR="${SCRIPT_DIR}/.oc-tunnel"
 PID_FILE="${STATE_DIR}/tunnel.pid"
 LOG_FILE="${STATE_DIR}/tunnel.log"
 
-PORT_LOCAL="${PORT_LOCAL:-3000}"
+PORT_LOCAL="${PORT_LOCAL:-8080}"
 PORT_REMOTE="${PORT_REMOTE:-3000}"
 GATEWAY_PORT="${GATEWAY_PORT:-18789}"
 HOST_BIND="${HOST_BIND:-127.0.0.1}"
@@ -38,7 +38,7 @@ Required env vars:
 	TOKEN         Token appended to URL
 
 Optional env vars:
-	PORT_LOCAL    Local forwarded port (default: 3000)
+	PORT_LOCAL    Local forwarded port (default: 8080)
 	PORT_REMOTE   Remote destination port (default: 3000)
 	GATEWAY_PORT  Local gateway port mapping (default: 18789)
 	HOST_BIND     Remote bind host (default: 127.0.0.1)
@@ -58,7 +58,6 @@ require_env() {
 	local missing=()
 	[[ -n "${KEY_PATH:-}" ]] || missing+=("KEY_PATH")
 	[[ -n "${HOST:-}" ]] || missing+=("HOST")
-	[[ -n "${TOKEN:-}" ]] || missing+=("TOKEN")
 
 	if (( ${#missing[@]} > 0 )); then
 		echo "Missing required environment variable(s): ${missing[*]}" >&2
@@ -67,7 +66,7 @@ require_env() {
 }
 
 tunnel_url() {
-	printf 'http://localhost:%s/#token=%s' "${PORT_LOCAL}" "${TOKEN}"
+	printf 'http://localhost:%s/' "${PORT_LOCAL}"
 }
 
 wait_for_tunnel() {

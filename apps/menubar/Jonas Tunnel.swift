@@ -160,15 +160,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     button.title = ""
                 }
                 
-                if !running {
-                    self.statusMenuItem.title = "Status: Disconnected"
-                    self.lastDashboardOk = false
-                    self.lastGatewayOk = false
-                } else {
-                    // Check ports in background
-                    self.checkPorts()
-                    self.statusMenuItem.title = "Status: Checking..."
-                }
+                self.statusMenuItem.title = "Status: Checking..."
+                self.statusMenuItem.attributedTitle = nil
+
+                // Always check both local ports, even if tunnel process isn't running,
+                // because gateway can already be running locally on the same port.
+                self.checkPorts()
                 
                 self.startItem.isEnabled = !running
                 self.restartItem.isEnabled = running
@@ -180,7 +177,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func checkPorts() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self, self.tunnelRunning else { return }
+            guard let self = self else { return }
             
             let overrides = self.loadEnvOverrides()
             let portLocal = Int(overrides["PORT_LOCAL"] ?? "8080") ?? 8080
@@ -192,16 +189,41 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.logDebug("Port check: dashboard(\(portLocal))=\(dashboardOk) gateway(\(gatewayPort))=\(gatewayOk)")
             
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.tunnelRunning else { return }
+                guard let self = self else { return }
                 self.lastDashboardOk = dashboardOk
                 self.lastGatewayOk = gatewayOk
-                
-                var statusParts: [String] = []
-                statusParts.append("Dashboard \(dashboardOk ? "✓" : "✗")")
-                statusParts.append("Gateway \(gatewayOk ? "✓" : "✗")")
-                self.statusMenuItem.title = "Status: \(statusParts.joined(separator: " | "))"
+
+                self.renderStatusRow(dashboardOk: dashboardOk, gatewayOk: gatewayOk)
             }
         }
+    }
+
+    private func renderStatusRow(dashboardOk: Bool, gatewayOk: Bool) {
+        self.statusMenuItem.isEnabled = true
+
+        let title = NSMutableAttributedString(string: "Status: ")
+        let normalAttributes: [NSAttributedString.Key: Any] = [
+            .foregroundColor: NSColor.labelColor
+        ]
+        title.addAttributes(normalAttributes, range: NSRange(location: 0, length: title.length))
+
+        title.append(attributedStatusPart(label: "Dashboard", ok: dashboardOk))
+        title.append(NSAttributedString(string: "  |  ", attributes: normalAttributes))
+        title.append(attributedStatusPart(label: "Gateway", ok: gatewayOk))
+
+        self.statusMenuItem.attributedTitle = title
+    }
+
+    private func attributedStatusPart(label: String, ok: Bool) -> NSAttributedString {
+        let mark = ok ? "✓" : "✗"
+        let color = ok ? NSColor.systemGreen : NSColor.systemRed
+
+        let part = NSMutableAttributedString(string: "\(label) ")
+        part.addAttributes([.foregroundColor: NSColor.labelColor], range: NSRange(location: 0, length: part.length))
+
+        let markAttr = NSAttributedString(string: mark, attributes: [.foregroundColor: color])
+        part.append(markAttr)
+        return part
     }
 
     private func isPortReachable(_ port: Int) -> Bool {
