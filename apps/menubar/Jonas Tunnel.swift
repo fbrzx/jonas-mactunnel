@@ -149,16 +149,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 self.tunnelRunning = running
-                
-                if let button = self.statusItem.button {
-                    let symbolName = running ? "lock.fill" : "lock.open"
-                    if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Jonas Tunnel") {
-                        image.size = NSSize(width: 16, height: 16)
-                        image.isTemplate = true
-                        button.image = image
-                    }
-                    button.title = ""
-                }
+
+                self.renderCheckingIcon(running: running)
                 
                 self.statusMenuItem.title = "Status: Checking..."
                 self.statusMenuItem.attributedTitle = nil
@@ -212,6 +204,48 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         title.append(attributedStatusPart(label: "Gateway", ok: gatewayOk))
 
         self.statusMenuItem.attributedTitle = title
+        self.renderStateIcon(dashboardOk: dashboardOk, gatewayOk: gatewayOk)
+    }
+
+    private func renderCheckingIcon(running: Bool) {
+        guard let button = self.statusItem.button else { return }
+        let symbolName = running ? "clock.fill" : "xmark.circle.fill"
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Jonas Tunnel") {
+            image.size = NSSize(width: 16, height: 16)
+            image.isTemplate = true
+            button.image = image
+            button.contentTintColor = running ? .secondaryLabelColor : .systemRed
+        }
+        button.title = ""
+    }
+
+    private func renderStateIcon(dashboardOk: Bool, gatewayOk: Bool) {
+        guard let button = self.statusItem.button else { return }
+
+        let bothOk = dashboardOk && gatewayOk
+        let bothDown = !dashboardOk && !gatewayOk
+
+        let symbolName: String
+        let color: NSColor
+
+        if bothOk {
+            symbolName = "checkmark.circle.fill"
+            color = .systemGreen
+        } else if bothDown {
+            symbolName = "xmark.circle.fill"
+            color = .systemRed
+        } else {
+            symbolName = "exclamationmark.triangle.fill"
+            color = .systemOrange
+        }
+
+        if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Jonas Tunnel") {
+            image.size = NSSize(width: 16, height: 16)
+            image.isTemplate = true
+            button.image = image
+            button.contentTintColor = color
+        }
+        button.title = ""
     }
 
     private func attributedStatusPart(label: String, ok: Bool) -> NSAttributedString {
