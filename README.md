@@ -6,9 +6,12 @@ This vault integrates with the Jonas AI agent to sync generated notes.
 
 1. **Create `.env` file** in this directory:
    ```bash
-   KEY_PATH=/path/to/your/ssh/key
+   KEY_PATH=/absolute/path/to/your/ssh/key
    HOST=user@your-vm-hostname.com
    JONAS_VAULT_PATH=/path/to/jonas/.volumes/agent-data/vault/
+   JONAS_LOCAL_TMP_VAULT=/Users/your-user/Projects/jonas/.volumes/agent-data/vault
+   # Optional: override final destination (defaults to iCloud Obsidian path)
+   JONAS_LOCAL_VAULT=/Users/your-user/Notes/Jonas
    ```
 
 2. **Set up shell alias** (add to `~/.zshrc`):

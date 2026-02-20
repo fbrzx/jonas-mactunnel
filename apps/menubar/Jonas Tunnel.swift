@@ -209,14 +209,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func renderCheckingIcon(running: Bool) {
         guard let button = self.statusItem.button else { return }
-        let symbolName = running ? "clock.fill" : "xmark.circle.fill"
+        let symbolName = running ? "lock.fill" : "lock.open.fill"
         if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Jonas Tunnel") {
             image.size = NSSize(width: 16, height: 16)
             image.isTemplate = true
             button.image = image
-            button.contentTintColor = running ? .secondaryLabelColor : .systemRed
+            button.contentTintColor = nil
+            button.title = ""
+        } else {
+            button.image = nil
+            button.contentTintColor = nil
+            button.title = ""
         }
-        button.title = ""
     }
 
     private func renderStateIcon(dashboardOk: Bool, gatewayOk: Bool) {
@@ -226,26 +230,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let bothDown = !dashboardOk && !gatewayOk
 
         let symbolName: String
-        let color: NSColor
 
-        if bothOk {
-            symbolName = "checkmark.circle.fill"
-            color = .systemGreen
-        } else if bothDown {
-            symbolName = "xmark.circle.fill"
-            color = .systemRed
+        if !tunnelRunning || bothDown {
+            symbolName = "lock.open.fill"
+        } else if bothOk {
+            symbolName = "lock.fill"
         } else {
-            symbolName = "exclamationmark.triangle.fill"
-            color = .systemOrange
+            symbolName = "lock.slash.fill"
         }
 
         if let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Jonas Tunnel") {
             image.size = NSSize(width: 16, height: 16)
             image.isTemplate = true
             button.image = image
-            button.contentTintColor = color
+            button.contentTintColor = nil
+            button.title = ""
+        } else {
+            button.image = nil
+            button.contentTintColor = nil
+            button.title = ""
         }
-        button.title = ""
     }
 
     private func attributedStatusPart(label: String, ok: Bool) -> NSAttributedString {

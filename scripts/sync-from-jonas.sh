@@ -10,6 +10,15 @@ AUTO_YES=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+expand_local_path() {
+	local path="$1"
+	if [[ "$path" == ~* ]]; then
+		echo "${path/#\~/$HOME}"
+	else
+		echo "$path"
+	fi
+}
+
 # Load .env
 if [[ -f "${PROJECT_ROOT}/.env" ]]; then
 	set -a
@@ -24,8 +33,10 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-LOCAL_VAULT="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/Jonas"
-TEMP_VAULT="${JONAS_LOCAL_TMP_VAULT}"
+DEFAULT_LOCAL_VAULT="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/Jonas"
+LOCAL_VAULT="$(expand_local_path "${JONAS_LOCAL_VAULT:-$DEFAULT_LOCAL_VAULT}")"
+TEMP_VAULT="$(expand_local_path "${JONAS_LOCAL_TMP_VAULT}")"
+KEY_PATH="$(expand_local_path "${KEY_PATH}")"
 
 echo -e "${BLUE}╔════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║       Jonas Vault Sync                     ║${NC}"
@@ -129,10 +140,15 @@ echo -e "${BLUE}Syncing to temporary location...${NC}"
 mkdir -p "${TEMP_VAULT}"
 rsync -avz --progress -e "ssh -i ${KEY_PATH}" "${REMOTE_PATH}" "${TEMP_VAULT}/"
 
-echo -e "${BLUE}Copying to iCloud vault...${NC}"
+echo -e "${BLUE}Copying to local vault...${NC}"
 mkdir -p "${LOCAL_VAULT}"
-# Note: Extended attributes (metadata) can't be copied to iCloud, but the files themselves copy fine
-cp -Rv "${TEMP_VAULT}/" "${LOCAL_VAULT}/" 2>&1 | grep -v "unable to copy extended attributes" || true
+if ! rsync -av --progress "${TEMP_VAULT}/" "${LOCAL_VAULT}/"; then
+	echo -e "${RED}Error: Failed to copy files into local vault${NC}"
+	echo ""
+	echo "Check file permissions for: ${LOCAL_VAULT}"
+	echo "If this is an iCloud path, also check Full Disk Access for your terminal app."
+	exit 1
+fi
 
 echo ""
 echo -e "${GREEN}✓ Vault synced to: ${LOCAL_VAULT}/${NC}"
